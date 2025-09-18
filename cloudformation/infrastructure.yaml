@@ -1,0 +1,351 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DynamoDB to S3 Event Processor - Production Infrastructure v2025-09-17'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'eaglesense-event-processor'
+    Description: 'Name prefix for all resources'
+
+  Environment:
+    Type: String
+    Default: 'prod'
+    AllowedValues: [dev, staging, prod]
+    Description: 'Environment name'
+
+  DynamoDBTableName:
+    Type: String
+    Default: 'events'
+    Description: 'Name of the DynamoDB table for events'
+
+  ClientIds:
+    Type: CommaDelimitedList
+    Default: 'client-001,client-002,client-003,client-004,client-005,client-006,client-007,client-008,client-009,client-010'
+    Description: 'List of client IDs for S3 bucket creation'
+
+Resources:
+  # ===== DynamoDB Table =====
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-${Environment}-${DynamoDBTableName}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: eventId
+          AttributeType: S
+        - AttributeName: time
+          AttributeType: S
+      KeySchema:
+        - AttributeName: eventId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: TimeIndex
+          KeySchema:
+            - AttributeName: time
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ===== S3 Buckets (one per client) =====
+  ClientBuckets:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt S3BucketCreatorFunction.Arn
+      ClientIds: !Ref ClientIds
+      BucketPrefix: !Sub '${ProjectName}-${Environment}-client-events'
+      ProjectName: !Ref ProjectName
+      Environment: !Ref Environment
+
+  # ===== Lambda Function for S3 Bucket Creation =====
+  S3BucketCreatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-bucket-creator'
+      Runtime: python3.11
+      Handler: index.handler
+      Timeout: 300
+      Role: !GetAtt S3BucketCreatorRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+
+          def handler(event, context):
+              s3 = boto3.client('s3')
+
+              try:
+                  if event['RequestType'] == 'Create':
+                      client_ids = event['ResourceProperties']['ClientIds']
+                      bucket_prefix = event['ResourceProperties']['BucketPrefix']
+                      project_name = event['ResourceProperties']['ProjectName']
+                      environment = event['ResourceProperties']['Environment']
+
+                      bucket_names = []
+                      for client_id in client_ids:
+                          bucket_name = f"{bucket_prefix}-{client_id}"
+                          bucket_names.append(bucket_name)
+
+                          # Create bucket
+                          s3.create_bucket(Bucket=bucket_name)
+
+                          # Enable versioning
+                          s3.put_bucket_versioning(
+                              Bucket=bucket_name,
+                              VersioningConfiguration={'Status': 'Enabled'}
+                          )
+
+                          # Add tags
+                          s3.put_bucket_tagging(
+                              Bucket=bucket_name,
+                              Tagging={
+                                  'TagSet': [
+                                      {'Key': 'Project', 'Value': project_name},
+                                      {'Key': 'Environment', 'Value': environment},
+                                      {'Key': 'ClientId', 'Value': client_id}
+                                  ]
+                              }
+                          )
+
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS,
+                                     {'BucketNames': bucket_names})
+
+                  elif event['RequestType'] == 'Delete':
+                      # Don't delete buckets to prevent data loss
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+                  else:
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  # ===== IAM Role for S3 Bucket Creator =====
+  S3BucketCreatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-bucket-creator-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3BucketCreationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:PutBucketVersioning
+                  - s3:PutBucketTagging
+                Resource: !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-client-events-*'
+
+  # ===== Event Processor Lambda Function =====
+  EventProcessorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ClientBuckets
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-event-processor'
+      Runtime: python3.11
+      Handler: main.lambda_handler
+      Timeout: 900  # 15 minutes
+      MemorySize: 3008  # Maximum memory for performance
+      Role: !GetAtt EventProcessorRole.Arn
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref EventsTable
+          S3_BUCKET_PREFIX: !Sub '${ProjectName}-${Environment}-client-events'
+          OUTPUT_FORMAT: 'json'
+          LOG_LEVEL: 'INFO'
+      Code:
+        ZipFile: |
+          # Placeholder code - will be updated via deployment script
+          def lambda_handler(event, context):
+              return {'statusCode': 200, 'body': 'Function deployed successfully'}
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ===== IAM Role for Event Processor (Least Privilege) =====
+  EventProcessorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-processor-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource:
+                  - !GetAtt EventsTable.Arn
+                  - !Sub '${EventsTable.Arn}/index/*'
+        - PolicyName: S3WritePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:HeadBucket
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-client-events-*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource: !Sub 'arn:aws:s3:::${ProjectName}-${Environment}-client-events-*/*'
+        - PolicyName: CloudWatchMetricsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+
+  # ===== EventBridge Rule for Hourly Execution =====
+  HourlyTrigger:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-hourly-trigger'
+      Description: 'Trigger event processor every hour'
+      ScheduleExpression: 'rate(1 hour)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt EventProcessorFunction.Arn
+          Id: EventProcessorTarget
+
+  # ===== Permission for EventBridge to invoke Lambda =====
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EventProcessorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt HourlyTrigger.Arn
+
+  # ===== CloudWatch Log Group for Lambda =====
+  EventProcessorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-${Environment}-event-processor'
+      RetentionInDays: 30
+
+  # ===== CloudWatch Alarms =====
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-lambda-errors'
+      AlarmDescription: 'Lambda function errors'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EventProcessorFunction
+
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-lambda-duration'
+      AlarmDescription: 'Lambda function duration high'
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 600000  # 10 minutes in milliseconds
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EventProcessorFunction
+
+  # ===== DynamoDB Throttle Alarm =====
+  DynamoDBThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ProjectName}-${Environment}-dynamodb-throttles'
+      AlarmDescription: 'DynamoDB throttling detected'
+      MetricName: ThrottledRequests
+      Namespace: AWS/DynamoDB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: TableName
+          Value: !Ref EventsTable
+
+Outputs:
+  DynamoDBTableName:
+    Description: 'Name of the DynamoDB table'
+    Value: !Ref EventsTable
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-dynamodb-table'
+
+  DynamoDBTableArn:
+    Description: 'ARN of the DynamoDB table'
+    Value: !GetAtt EventsTable.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-dynamodb-table-arn'
+
+  LambdaFunctionName:
+    Description: 'Name of the Lambda function'
+    Value: !Ref EventProcessorFunction
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-lambda-function'
+
+  LambdaFunctionArn:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt EventProcessorFunction.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-lambda-function-arn'
+
+  S3BucketPrefix:
+    Description: 'Prefix for S3 buckets'
+    Value: !Sub '${ProjectName}-${Environment}-client-events'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-s3-bucket-prefix'
+
+  EventProcessorRoleArn:
+    Description: 'ARN of the Lambda execution role'
+    Value: !GetAtt EventProcessorRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-lambda-role-arn'

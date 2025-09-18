@@ -1,0 +1,50 @@
+# Configuration for DynamoDB to S3 Event Processor
+
+# DynamoDB Settings
+dynamodb:
+  table_name: ${DYNAMODB_TABLE_NAME:-events}
+  region: ${AWS_REGION:-us-east-1}
+  # Number of parallel segments for scanning
+  parallel_segments: 8
+  # Read capacity units to consume (percentage)
+  read_throughput_percent: 0.5
+  # Batch size for scanning
+  scan_batch_size: 1000
+
+# S3 Settings
+s3:
+  # Bucket naming pattern: {bucket_prefix}-{client_id}
+  bucket_prefix: ${S3_BUCKET_PREFIX:-client-events}
+  region: ${AWS_REGION:-us-east-1}
+  # Output format: json or csv
+  output_format: ${OUTPUT_FORMAT:-json}
+  # Enable server-side encryption
+  server_side_encryption: AES256
+
+# Processing Settings
+processing:
+  # Time window in hours to fetch data
+  time_window_hours: 1
+  # Batch size for processing events in memory
+  batch_size: 10000
+  # Maximum retries for failed operations
+  max_retries: 3
+  # Exponential backoff base delay (seconds)
+  retry_delay: 1
+
+# Logging Settings
+logging:
+  level: ${LOG_LEVEL:-INFO}
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Lambda Settings (when deployed as Lambda)
+lambda:
+  memory_size: 3008  # MB
+  timeout: 900  # seconds (15 minutes)
+
+# Performance Settings
+performance:
+  # Use multiprocessing for parallel uploads
+  parallel_uploads: true
+  # Maximum number of concurrent S3 uploads
+  max_concurrent_uploads: 10

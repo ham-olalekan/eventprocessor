@@ -20,21 +20,21 @@ A serverless application that reads DynamoDB events from the past hour, groups t
 
 ### Setup (Seriously, Just Two Steps!)
 
-1. **Clone and Setup**
+1. **Clone and Setup Development Environment**
    ```bash
    git clone <repository-url>
    cd processor
    ./scripts/setup_dev_environment.sh
    ```
-   *This magical script does everything: venv, dependencies, config files, git hooks, the works!*
+   *This magical script sets up your local dev environment: venv, dependencies, config files, git hooks, the works!*
 
-2. **Deploy to AWS**
+2. **Deploy to AWS with CloudFormation**
    ```bash
    ./scripts/deploy.sh
    ```
-   *Sit back, relax, and watch CloudFormation do its thing. ☕*
+   *This script uses CloudFormation to deploy all AWS components: DynamoDB table, S3 buckets, Lambda function, IAM roles, EventBridge rules, and CloudWatch alarms. Sit back, relax, and watch the infrastructure magic happen! ☕*
 
-That's it! No really, that's actually it. The setup script is like a Swiss Army knife for development environments.
+That's it! No really, that's actually it. Two scripts handle everything from local setup to full AWS deployment.
 
 ## 🏗️ What's Under the Hood
 

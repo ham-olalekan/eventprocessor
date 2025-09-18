@@ -181,7 +181,7 @@ def main():
     try:
         config = Config()
     except FileNotFoundError as e:
-        print(f"Configuration error: {e}")
+        logging.error(f"Configuration error: {e}")
         sys.exit(1)
 
     setup_logging(config)

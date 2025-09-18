@@ -1,13 +1,11 @@
 # 🦅 EagleSense Event Processor
 
-*Because somebody has to organize those DynamoDB events, and it might as well be us!*
-
 A serverless application that reads DynamoDB events from the past hour, groups them by client, and ships them off to S3. Think of it as a very polite digital mailman that sorts mail into different buckets. 📮
 
 ## ⚡ Quick Stats
 
 - **Speed**: 5,734 events/second (faster than your morning coffee order)
-- **Scale**: Tested with 100K events (that's a lot of digital paperwork)
+- **Scale**: Tested with 200K events per hour (that's a lot of digital paperwork)
 - **Success Rate**: 100% (we're perfectionists like that)
 - **Memory**: ~200MB peak (lightweight champion)
 
@@ -128,20 +126,12 @@ python scripts/run_local.py
 **Growing Pains**: 500K-1M events/hour (consider Step Functions)
 **Enterprise Scale**: 1M+ events/hour (time for Glue or containers)
 
-## 🆘 When Things Go Wrong
-
-1. Check CloudWatch logs (they usually tell the truth)
-2. Look at custom metrics (pretty graphs reveal secrets)
-3. Verify IAM permissions (it's always permissions)
-4. Make sure S3 buckets exist (rookie mistake #1)
-5. Panic responsibly 😅
-
 ## 📁 Project Structure
 
 ```
 processor/
 ├── src/                    # The good stuff
-├── tests/                  # 70% coverage (we're not perfect)
+├── tests/                  # 70% coverage (I'm not perfect (lol))
 ├── scripts/                # Automation magic
 ├── cloudformation/         # Infrastructure as code
 └── config/                 # Settings and knobs
@@ -153,11 +143,3 @@ processor/
 - We retry S3 uploads with exponential backoff (patience grasshopper)
 - Memory usage peaks at ~200MB (Lambda's happy place)
 - File naming follows `events-YYYY-MM-DD-HH.json` (ISO 8601 or bust!)
-
-## 📝 License
-
-MIT License (because sharing is caring)
-
----
-
-*Built with ☕, 🐍, and a healthy dose of AWS Stockholm syndrome.*
